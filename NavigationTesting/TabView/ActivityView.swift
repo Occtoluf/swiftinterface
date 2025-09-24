@@ -1,7 +1,8 @@
 //
-//  ContentView.swift
+//  ActivityView.swift
 //  NavigationTesting
 //
+//  Refactored to MVVM Architecture
 //  Created by Иван Сеник on 28.05.2025.
 //
 
@@ -9,11 +10,13 @@ import SwiftUI
 
 struct ActivityView: View {
     let headerColor = LinearGradient(gradient: Gradient(colors: [Color.red, Color.blue]), startPoint: .bottomLeading, endPoint: .topTrailing)
-    @State private var myStatistic1 = 42
-    @State private var myStatistic2 = 14
-    @State private var myStatistic3 = 3
-    @State private var myStatistic4 = 7
-
+    
+    // MVVM: Заменяем @State на @ObservedObject
+    @ObservedObject private var viewModel = ActivityViewModel()
+    
+    // Состояние для pull-to-refresh
+    @State private var isRefreshing = false
+    
     var body: some View {
         NavigationView {
             ZStack {
@@ -22,77 +25,219 @@ struct ActivityView: View {
 
                 VStack(spacing: 0) {
                     HeaderView()
-                    VStack(){
-                        CheckInHistory()
-                            .padding(.bottom)
-                        HStack{
-                            Text("Неделя")
-                                .padding(4)
-                                .frame(maxWidth: .infinity)
-                                .overlay {
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .stroke(.white, lineWidth: 1)
-                                }
-                            
-                            Text("Месяц")
-                                .frame(maxWidth: .infinity)
-                            Text("Все время")
-                                .frame(maxWidth: .infinity)
-                                .padding(4)
+                    
+                    // Основной контент с обработкой состояний
+                    Group {
+                        if viewModel.isLoading && viewModel.statistics == nil {
+                            // Первоначальная загрузка
+                            LoadingView()
+                        } else if viewModel.hasError && viewModel.statistics == nil {
+                            // Ошибка при первой загрузке
+                            ErrorView(errorMessage: viewModel.errorMessage) {
+                                Task { await viewModel.retryLoading() }
+                            }
+                        } else {
+                            // Основной контент
+                            StatisticsContentView(viewModel: viewModel, isRefreshing: $isRefreshing)
                         }
-                        .foregroundStyle(Color.white)
-                        HStack {
-                            NextViewButton(startColor: Color(hex:"#42aaff"),
-                                           endColor: Color(hex:"#a544d4"),
-                                           name: "Занятий",
-                                           lastName: "посещено",
-                                           statistic: $myStatistic1,
-                                           icon:"waveform.path.ecg",
-                                           commentary: "Это больше на **20%** чем ранее",)
-                            NextViewButton(startColor: Color(hex:"#a544d4"),
-                                           endColor: Color(hex:"#44d4a5"),
-                                           name: "Занятий",
-                                           lastName: "групповых",
-                                           statistic: $myStatistic2,
-                                           icon:"figure.yoga",
-                                           commentary: "Это меньше на **11%** чем ранее",)
-                        }
-                        .padding(.top)
-                        HStack {
-                            NextViewButton(startColor: Color(hex:"#DAA520"),
-                                           endColor: Color(hex:" #FF4500"),
-                                           name: "Минут",
-                                           lastName: "на кардио",
-                                           statistic: $myStatistic3,
-                                           icon:"clock",
-                                           commentary: "Это **рекорд** среди ваших друзей",)
-                            NextViewButton(startColor: Color(hex:"#FF4500"),
-                                           endColor: Color(hex:"#a3b414"),
-                                           name: "Дней",
-                                           lastName: "подряд",
-                                           statistic: $myStatistic4,
-                                           icon:"hare",
-                                           commentary: "Вы входите в **топ** по посещаемости",)
-                        }
-                        Spacer()
                     }
-                    .padding()
-                    .background(Color.black)
-                    .clipShape(
-                        .rect(
-                            topLeadingRadius: 30,
-                            topTrailingRadius: 30,
-                        )
-                    )
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .edgesIgnoringSafeArea(.bottom)
             }
         }
+        .task {
+            // Загружаем данные при появлении View
+            await viewModel.loadInitialData()
+        }
+        .alert("Ошибка загрузки", isPresented: .constant(viewModel.hasError && viewModel.statistics != nil)) {
+            Button("Повторить") {
+                Task { await viewModel.retryLoading() }
+            }
+            Button("Отмена", role: .cancel) { }
+        } message: {
+            Text(viewModel.errorMessage)
+        }
     }
 }
 
-// Экран назначения
+// MARK: - Statistics Content View
+struct StatisticsContentView: View {
+    @ObservedObject var viewModel: ActivityViewModel
+    @Binding var isRefreshing: Bool
+    
+    var body: some View {
+        VStack(){
+            CheckInHistory()
+                .padding(.bottom)
+            
+            // Период статистики
+            HStack{
+                Text("Неделя")
+                    .padding(4)
+                    .frame(maxWidth: .infinity)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(.white, lineWidth: 1)
+                    }
+                
+                Text("Месяц")
+                    .frame(maxWidth: .infinity)
+                Text("Все время")
+                    .frame(maxWidth: .infinity)
+                    .padding(4)
+            }
+            .foregroundStyle(Color.white)
+            
+            // Статистические виджеты (теперь с данными из ViewModel)
+            HStack {
+                NextViewButton(
+                    startColor: Color(hex:"#42aaff"),
+                    endColor: Color(hex:"#a544d4"),
+                    name: "Занятий",
+                    lastName: "посещено",
+                    statistic: .constant(viewModel.workoutCount), // Реальные данные!
+                    icon:"waveform.path.ecg",
+                    commentary: viewModel.workoutGrowthText
+                )
+                NextViewButton(
+                    startColor: Color(hex:"#a544d4"),
+                    endColor: Color(hex:"#44d4a5"),
+                    name: "Занятий",
+                    lastName: "групповых",
+                    statistic: .constant(viewModel.groupWorkoutCount), // Реальные данные!
+                    icon:"figure.yoga",
+                    commentary: viewModel.groupWorkoutGrowthText
+                )
+            }
+            .padding(.top)
+            
+            HStack {
+                NextViewButton(
+                    startColor: Color(hex:"#DAA520"),
+                    endColor: Color(hex:" #FF4500"),
+                    name: "Минут",
+                    lastName: "на кардио",
+                    statistic: .constant(viewModel.cardioMinutes), // Реальные данные!
+                    icon:"clock",
+                    commentary: viewModel.cardioGrowthText
+                )
+                NextViewButton(
+                    startColor: Color(hex:"#FF4500"),
+                    endColor: Color(hex:"#a3b414"),
+                    name: "Дней",
+                    lastName: "подряд",
+                    statistic: .constant(viewModel.streakDays), // Реальные данные!
+                    icon:"hare",
+                    commentary: viewModel.streakGrowthText
+                )
+            }
+            
+            Spacer()
+        }
+        .padding()
+        .background(Color.black)
+        .clipShape(
+            .rect(
+                topLeadingRadius: 30,
+                topTrailingRadius: 30
+            )
+        )
+        .refreshable {
+            // Pull-to-refresh функциональность
+            isRefreshing = true
+            await viewModel.refreshData()
+            isRefreshing = false
+        }
+        .overlay(
+            // Индикатор обновления
+            Group {
+                if viewModel.isLoading && viewModel.statistics != nil {
+                    VStack {
+                        HStack {
+                            ProgressView()
+                                .scaleEffect(0.8)
+                            Text("Обновление...")
+                                .font(.caption)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color.black.opacity(0.8))
+                        .foregroundColor(.white)
+                        .cornerRadius(20)
+                        Spacer()
+                    }
+                    .padding(.top, 10)
+                }
+            }
+        )
+    }
+}
+
+// MARK: - Loading View
+struct LoadingView: View {
+    var body: some View {
+        VStack(spacing: 20) {
+            ProgressView()
+                .scaleEffect(1.5)
+                .progressViewStyle(CircularProgressViewStyle(tint: .white))
+            
+            Text("Загрузка статистики...")
+                .foregroundColor(.white)
+                .font(.headline)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.black.opacity(0.8))
+        .clipShape(
+            .rect(
+                topLeadingRadius: 30,
+                topTrailingRadius: 30
+            )
+        )
+    }
+}
+
+// MARK: - Error View
+struct ErrorView: View {
+    let errorMessage: String
+    let retryAction: () -> Void
+    
+    var body: some View {
+        VStack(spacing: 20) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.largeTitle)
+                .foregroundColor(.orange)
+            
+            Text("Ошибка загрузки")
+                .font(.headline)
+                .foregroundColor(.white)
+            
+            Text(errorMessage)
+                .font(.caption)
+                .foregroundColor(.gray)
+                .multilineTextAlignment(.center)
+            
+            Button("Повторить") {
+                retryAction()
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 12)
+            .background(Color.blue)
+            .foregroundColor(.white)
+            .cornerRadius(8)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.black.opacity(0.8))
+        .clipShape(
+            .rect(
+                topLeadingRadius: 30,
+                topTrailingRadius: 30
+            )
+        )
+    }
+}
+
+// Экран назначения - остается без изменений
 struct DetailView: View {
     var body: some View {
         Text("Детальный просмотр")
@@ -104,6 +249,7 @@ struct DetailView: View {
     ActivityView()
 }
 
+// MARK: - Extensions (остаются без изменений)
 extension Color {
     init(hex: String) {
         let hex = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
@@ -130,7 +276,6 @@ extension Color {
         )
     }
 }
-
 
 struct RoundedCorner: Shape {
     let radius: CGFloat
