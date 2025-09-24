@@ -25,9 +25,9 @@ class ActivityViewModel: ObservableObject {
     
     // MARK: - Computed Properties для View
     var isLoading: Bool {
-        case .loading = loadingState
-        return true
-        default:
+        if case .loading = loadingState {
+            return true
+        }
         return false
     }
     
